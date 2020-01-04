@@ -1,5 +1,3 @@
-{-# LANGUAGE BlockArguments #-}
-
 import Data.List
 import Data.Maybe
 import Data.Text (splitOn, pack, unpack)
@@ -34,16 +32,26 @@ data Command = Pwd
     | Write { file :: String, content :: String }
     | Invalid deriving (Show, Eq)
 
+--- Parse
 
--- Path calculation
+readCommand :: [String] -> Command
+readCommand ("pwd":[])    = Pwd
+readCommand ("pwd":args)  = Invalid
+readCommand ("cd":[])     = Invalid
+readCommand ("cd":arg:args)  = Cd arg
+readCommand ("ls":[])     = Ls ""
+readCommand ("ls":arg:args)  = Ls arg
+readCommand ("rm":[])     = Invalid
+readCommand ("rm":args)   = Rm args
+readCommand ("cat":[])    = Invalid
+readCommand ("cat":args)  = Cat args
+readCommand ("wr":[])     = Invalid
+readCommand ("wr":a:[])   = Invalid
+readCommand ("wr":a:b)    = Write a (intercalate " " b)
+readCommand _             = Invalid
 
 
-resolvePath :: String -> [String]
-resolvePath path = filter (\h -> h /= ".." && h /= "." && h /= "") $ resolveHelper $ [""] ++ (filter (\x -> length x > 0) splitted)
-    where   splitted = map (\x -> unpack x) $ splitOn delimiter textPath
-            delimiter = pack "/"
-            textPath = pack path
-
+--- Path calculation
 
 --gives a proper splitterd path starting from root
 resolveHelper :: [String] -> [String]
@@ -53,12 +61,20 @@ resolveHelper (a:"..":c) = resolveHelper c
 resolveHelper (a:".":c)  = resolveHelper $ [a] ++ c
 resolveHelper (a:b:c)    = [a] ++ (resolveHelper $ [b] ++ c)
 
+
+resolvePath :: String -> [String]
+resolvePath path = filter (\h -> h /= ".." && h /= "." && h /= "") $ resolveHelper $ [""] ++ (filter (\x -> length x > 0) splitted)
+    where   splitted = map (\x -> unpack x) $ splitOn delimiter textPath
+            delimiter = pack "/"
+            textPath = pack path
+
+
+
 calcPath :: String -> String -> [String]
 calcPath curr path@('/':rest) = resolvePath path       --for paths starting with /
 calcPath curr path = resolvePath (curr ++ "/" ++ path)
 
-
--- FileSystem getters
+--- FileSystem getters
 
 
 getSubfolder :: Folder -> String -> Maybe Folder
@@ -83,16 +99,12 @@ getNewFileSystem root currentFolder (x:xs) fullPath =
          (fullPath ++ "/" ++ folderName(fromJust nextFolder))
 
 
---Functions
+--- Functions
 
--- VERY IMPORTANT DO NOT DELETE
 -- This function is used for readability
 pwd = current 
 
-
-
-
---rm
+--  rm
 
 copyOfFoldersRm :: [Folder] -> [String] -> [Folder] 
 copyOfFoldersRm [] _ = []
@@ -102,10 +114,10 @@ copyOfFolderRm :: Folder -> [String] -> Folder
 copyOfFolderRm x [] = Folder (folderName x) (copyOfFoldersRm (subFolders x) []) (subFiles x) 
 copyOfFolderRm x (p:path) = if (p == folderName x) 
                         then if (length path == 1 && (elem (head path) (map (\y -> fileName y) (subFiles x))))
-                             then Folder (folderName x) (copyOfFoldersRm (subFolders x) []) (filesWithout (head path) (subFiles x))
+                             then Folder (folderName x) (copyOfFoldersRm (subFolders x) []) (removeGivenFile (head path) (subFiles x))
                              else Folder (folderName x) (copyOfFoldersRm (subFolders x) path) (subFiles x) 
                         else Folder (folderName x) (copyOfFoldersRm (subFolders x) []) (subFiles x)
-                        where filesWithout name files = (filter (\y -> name /= fileName y) files)
+                        where removeGivenFile name files = (filter (\y -> name /= fileName y) files)
 
 rm :: FileSystem -> [String] -> CommandResult
 rm fs path = CommandResult (FileSystem (current fs) (copyOfFolderRm (root fs) path)) ""
@@ -180,7 +192,7 @@ getFileCont folder name = if (elem name (map (\x -> (fileName x)) $ subFiles fol
                         else Nothing
 
 
--- Execute
+--- Execute
 
 
 executeCat :: [String] -> FileSystem -> String -> CommandResult
@@ -192,12 +204,12 @@ executeCat (file:rest)  fs res = executeCat rest fs (res ++ output curr) -- stac
 executeRm :: [String] -> FileSystem -> String -> CommandResult
 executeRm []       fs res = CommandResult fs res
 executeRm (f:args) fs res = executeRm args newFs newRes 
-                                where exec   = rm fs (["/"] ++ (calcPath (pwd fs) f)) -- some magic goes here (Ino pilince tuj mi kaza)
+                                where exec   = rm fs (["/"] ++ (calcPath (pwd fs) f)) 
                                       newFs  = fileSystem exec
                                       newRes = res ++ (output exec)
 
 execute :: Command -> FileSystem -> CommandResult
-execute (Invalid)   fs = CommandResult fs "Invalid command... sorry"
+execute (Invalid)   fs = CommandResult fs "Invalid command."
 execute (Pwd)       fs = CommandResult fs (pwd fs)
 execute (Ls  path)  fs = ls fs $ calcPath (pwd fs) path
 execute (Cd  path)  fs = cd fs $ calcPath (pwd fs) path
@@ -205,38 +217,18 @@ execute (Write f c) fs = write fs (calcPath (pwd fs) f) c False
 execute (Rm  args)  fs = executeRm  args fs ""
 execute (Cat args)  fs = executeCat args fs ""
 
-
--- Parse
-
-
-readCommand :: [String] -> Command
-readCommand ("pwd":[])    = Pwd
-readCommand ("pwd":args)  = Invalid
-readCommand ("cd":[])     = Invalid
-readCommand ("cd":arg:args)  = Cd arg
-readCommand ("ls":[])     = Ls ""
-readCommand ("ls":arg:args)  = Ls arg
-readCommand ("rm":[])     = Invalid
-readCommand ("rm":args)   = Rm args
-readCommand ("cat":[])    = Invalid
-readCommand ("cat":args)  = Cat args
-readCommand ("wr":[])     = Invalid
-readCommand ("wr":a:[])   = Invalid
-readCommand ("wr":a:b)    = Write a (intercalate " " b)
-readCommand _             = Invalid
-
--- Main Loop
+--- Main
 
 
-loop :: FileSystem -> IO FileSystem
-loop fs = do 
+start :: FileSystem -> IO FileSystem
+start fs = do 
     line <- getLine
     let args = readCommand (words line)
         res = execute args fs
     print (output res)
-    loop (fileSystem res)
-    --pure $ fs
+    start (fileSystem res)
 
+--- Sample Filesystem
 
 fs = FileSystem "/" (Folder "/" [
                         Folder "test" [
